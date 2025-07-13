@@ -1,0 +1,32 @@
+[Unit]
+Description=PicoPixels LED Matrix Web Server
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=picopixels
+Group=dialout
+WorkingDirectory=/opt/picopixels
+ExecStart=/opt/picopixels/venv/bin/python /opt/picopixels/server.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=picopixels-server
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/picopixels
+CapabilityBoundingSet=CAP_DAC_OVERRIDE
+AmbientCapabilities=CAP_DAC_OVERRIDE
+
+# Environment
+Environment=PYTHONPATH=/opt/picopixels
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

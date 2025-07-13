@@ -6,6 +6,7 @@ Simple Flask server to control LED matrix via web interface
 
 from flask import Flask, render_template_string, request, jsonify
 import serial
+import serial.tools.list_ports
 import time
 import threading
 import json
@@ -13,28 +14,36 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# Configuration - adjust these for your setup
-SERIAL_PORT = '/dev/ttyACM2'  # Change to your Pi Pico port (COM3 on Windows)
+# Configuration
 SERIAL_BAUDRATE = 115200
 SERIAL_TIMEOUT = 1
 
 class LEDMatrixController:
-    def __init__(self, port=SERIAL_PORT, baudrate=SERIAL_BAUDRATE):
-        self.port = port
+    def __init__(self, baudrate=SERIAL_BAUDRATE):
+        self.port = None
         self.baudrate = baudrate
         self.serial_connection = None
         self.connected = False
         self.last_command = None
         self.current_effect = "None"
-        
-        self.connect()
-    
-    def connect(self):
+
+    def connect(self, port=None):
         """Connect to the Pi Pico"""
+        if port:
+            self.port = port
+
+        if not self.port:
+            print("❌ No port specified")
+            return False
+
         try:
+            # Disconnect existing connection if any
+            if self.serial_connection:
+                self.disconnect()
+
             self.serial_connection = serial.Serial(
-                self.port, 
-                self.baudrate, 
+                self.port,
+                self.baudrate,
                 timeout=SERIAL_TIMEOUT
             )
             time.sleep(2)  # Wait for connection to stabilize
@@ -45,21 +54,21 @@ class LEDMatrixController:
             print(f"❌ Failed to connect to {self.port}: {e}")
             self.connected = False
             return False
-    
+
     def send_command(self, command):
         """Send command to the LED matrix"""
         if not self.connected:
             return {"status": "error", "message": "Not connected to LED matrix"}
-        
+
         try:
             # Send command
             self.serial_connection.write(f"{command}\r\n".encode())
             self.serial_connection.flush()
-            
+
             # Wait for response
             time.sleep(0.1)
             responses = []
-            
+
             # Read any available responses
             for _ in range(5):  # Try up to 5 times
                 if self.serial_connection.in_waiting:
@@ -67,32 +76,32 @@ class LEDMatrixController:
                     if response:
                         responses.append(response)
                 time.sleep(0.05)
-            
+
             self.last_command = command
-            
+
             # Update current effect if it's a start command
             if command.startswith('start '):
                 self.current_effect = command.split(' ', 1)[1]
             elif command == 'stop':
                 self.current_effect = "None"
-            elif command in ['test', 'border', 'on', 'off', 'clock']:
+            elif command in ['test', 'border', 'on', 'off']:
                 self.current_effect = command
-            
+
             print(f"📤 Sent: {command}")
             if responses:
                 print(f"📥 Response: {', '.join(responses)}")
-            
+
             return {
-                "status": "success", 
+                "status": "success",
                 "command": command,
                 "responses": responses,
                 "current_effect": self.current_effect
             }
-            
+
         except Exception as e:
             print(f"❌ Error sending command '{command}': {e}")
             return {"status": "error", "message": str(e)}
-    
+
     def disconnect(self):
         """Disconnect from the LED matrix"""
         if self.serial_connection:
@@ -111,6 +120,7 @@ HTML_TEMPLATE = '''
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LED Matrix Controller</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23667eea'/><rect x='10' y='10' width='80' height='80' fill='%23764ba2'/><circle cx='25' cy='25' r='3' fill='%23ff6b6b'/><circle cx='35' cy='25' r='3' fill='%23ffa500'/><circle cx='45' cy='25' r='3' fill='%23ffeb3b'/><circle cx='55' cy='25' r='3' fill='%234caf50'/><circle cx='65' cy='25' r='3' fill='%232196f3'/><circle cx='75' cy='25' r='3' fill='%239c27b0'/><rect x='20' y='35' width='60' height='4' fill='%23ecf0f1' opacity='0.8'/><rect x='20' y='45' width='40' height='4' fill='%23ecf0f1' opacity='0.6'/><rect x='20' y='55' width='50' height='4' fill='%23ecf0f1' opacity='0.7'/><rect x='20' y='65' width='35' height='4' fill='%23ecf0f1' opacity='0.5'/><rect x='20' y='75' width='45' height='4' fill='%23ecf0f1' opacity='0.6'/></svg>" type="image/svg+xml">
     <style>
         * {
             margin: 0;
@@ -218,10 +228,6 @@ HTML_TEMPLATE = '''
             background: linear-gradient(45deg, #f39c12, #e67e22);
         }
 
-        .btn.clock {
-            background: linear-gradient(45deg, #3498db, #2980b9);
-        }
-
         .control-group {
             display: flex;
             align-items: center;
@@ -241,44 +247,41 @@ HTML_TEMPLATE = '''
         .slider {
             flex: 1;
             -webkit-appearance: none;
-            height: 6px;
-            border-radius: 3px;
+            height: 8px;
+            border-radius: 4px;
             background: #ddd;
             outline: none;
             position: relative;
         }
 
-        /* Non-linear speed slider visual indicator */
-        .slider#speed {
-            background: linear-gradient(to right, 
-                #4CAF50 0%,     /* Fast (green) */
-                #4CAF50 30%,    
-                #FFC107 30%,    /* Medium (yellow) */
-                #FFC107 70%,    
-                #f44336 70%,    /* Slow (red) */
-                #f44336 100%
-            );
+        .slider.speed-slider {
+            background: linear-gradient(90deg, #ff6b6b 0%, #ffa500 25%, #ffeb3b 50%, #4caf50 75%, #2196f3 100%);
+        }
+
+        .slider.brightness-slider {
+            background: linear-gradient(90deg, #000000 0%, #333333 25%, #666666 50%, #999999 75%, #ffffff 100%);
         }
 
         .slider::-webkit-slider-thumb {
             -webkit-appearance: none;
             appearance: none;
-            width: 20px;
-            height: 20px;
+            width: 24px;
+            height: 24px;
             border-radius: 50%;
-            background: linear-gradient(45deg, #667eea, #764ba2);
+            background: white;
+            border: 3px solid #667eea;
             cursor: pointer;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
         }
 
         .slider::-moz-range-thumb {
-            width: 20px;
-            height: 20px;
+            width: 24px;
+            height: 24px;
             border-radius: 50%;
-            background: linear-gradient(45deg, #667eea, #764ba2);
+            background: white;
+            border: 3px solid #667eea;
             cursor: pointer;
-            border: none;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
         }
 
         .value-display {
@@ -308,70 +311,86 @@ HTML_TEMPLATE = '''
             border-color: #667eea;
         }
 
-        .clock-settings {
-            background: #e3f2fd;
+        .port-settings {
+            background: #f3e5f5;
             border-radius: 10px;
             padding: 15px;
             margin-bottom: 15px;
-            border-left: 4px solid #3498db;
+            border-left: 4px solid #9c27b0;
         }
 
-        .clock-options {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 10px;
-            margin-top: 10px;
+        .port-select {
+            flex: 1;
+            padding: 8px 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            background: white;
+            margin-right: 10px;
+            min-width: 0;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
-        .toggle-group {
+        .port-control-group {
             display: flex;
             align-items: center;
+            gap: 15px;
+            margin-bottom: 15px;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            flex-wrap: wrap;
+        }
+
+        .port-control-group label {
+            font-weight: 600;
+            color: #2c3e50;
+            min-width: 100px;
+            flex-shrink: 0;
+        }
+
+        .port-dropdown-container {
+            display: flex;
             gap: 10px;
+            flex: 1;
+            align-items: center;
+            min-width: 200px;
+            max-width: 100%;
         }
 
-        .toggle-switch {
-            position: relative;
-            display: inline-block;
-            width: 50px;
-            height: 24px;
+        .port-select:focus {
+            outline: none;
+            border-color: #9c27b0;
         }
 
-        .toggle-switch input {
-            opacity: 0;
-            width: 0;
-            height: 0;
+        .port-status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 14px;
+            font-weight: 500;
+            display: none;
         }
 
-        .toggle-slider {
-            position: absolute;
-            cursor: pointer;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: #ccc;
-            transition: .4s;
-            border-radius: 24px;
+        .port-status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
         }
 
-        .toggle-slider:before {
-            position: absolute;
-            content: "";
-            height: 16px;
-            width: 16px;
-            left: 4px;
-            bottom: 4px;
-            background-color: white;
-            transition: .4s;
-            border-radius: 50%;
+        .port-status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
         }
 
-        input:checked + .toggle-slider {
-            background-color: #3498db;
-        }
-
-        input:checked + .toggle-slider:before {
-            transform: translateX(26px);
+        .port-status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
         }
 
         .log {
@@ -427,7 +446,7 @@ HTML_TEMPLATE = '''
 <body>
     <div class="container">
         <h1>🔥 LED Matrix Control Center</h1>
-        
+
         <div class="status">
             <h3>System Status</h3>
             <div class="status-item">
@@ -447,7 +466,25 @@ HTML_TEMPLATE = '''
             </div>
             <div class="status-item">
                 <span>Port:</span>
-                <span>{{ port }}</span>
+                <span>{{ port or 'None Selected' }}</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3>🔌 Port Settings</h3>
+            <div class="port-settings">
+                <div class="port-control-group">
+                    <label>Available Ports:</label>
+                    <div class="port-dropdown-container">
+                        <select id="port-dropdown" class="port-select" onchange="connectToSelectedPort()">
+                            <option value="">Scanning...</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="button-grid" style="margin-top: 15px;">
+                    <button class="btn" onclick="reconnectCurrent()">Reconnect Current</button>
+                </div>
+                <div id="port-status" class="port-status"></div>
             </div>
         </div>
 
@@ -473,63 +510,24 @@ HTML_TEMPLATE = '''
                 <button class="btn" onclick="startEffect('balls')">Bouncing Balls</button>
                 <button class="btn" onclick="startEffect('pong')">Pong Game</button>
                 <button class="btn" onclick="startEffect('text')">Scrolling Text</button>
-                <button class="btn clock" onclick="startEffect('clock')">Clock</button>
-            </div>
-        </div>
-
-        <div class="section">
-            <h3>🕐 Clock Settings</h3>
-            <div class="clock-settings">
-                <div class="clock-options">
-                    <div class="toggle-group">
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="clock-format" onchange="updateClockSettings()">
-                            <span class="toggle-slider"></span>
-                        </label>
-                        <span>12-hour format</span>
-                    </div>
-                    <div class="toggle-group">
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="show-seconds" onchange="updateClockSettings()">
-                            <span class="toggle-slider"></span>
-                        </label>
-                        <span>Show seconds</span>
-                    </div>
-                    <div class="toggle-group">
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="blink-colon" checked onchange="updateClockSettings()">
-                            <span class="toggle-slider"></span>
-                        </label>
-                        <span>Blink colon</span>
-                    </div>
-                </div>
-                <div class="button-grid" style="margin-top: 15px;">
-                    <button class="btn clock" onclick="showClock()">Show Clock Once</button>
-                    <button class="btn clock" onclick="startEffect('clock')">Start Live Clock</button>
-                </div>
             </div>
         </div>
 
         <div class="section">
             <h3>🎛️ Settings</h3>
-            
+
             <div class="control-group">
                 <label>Brightness:</label>
-                <input type="range" class="slider" id="brightness" min="0" max="15" value="5" 
+                <input type="range" class="slider brightness-slider" id="brightness" min="0" max="4" value="2" step="1"
                        oninput="updateBrightness(this.value)">
-                <div class="value-display" id="brightness-value">5</div>
+                <div class="value-display" id="brightness-value">Normal</div>
             </div>
 
             <div class="control-group">
                 <label>Speed:</label>
-                <input type="range" class="slider" id="speed" min="10" max="500" value="100" 
+                <input type="range" class="slider speed-slider" id="speed" min="0" max="4" value="2" step="1"
                        oninput="updateSpeed(this.value)">
-                <div class="value-display" id="speed-value" style="min-width: 60px;">100ms</div>
-            </div>
-            <div style="display: flex; justify-content: space-between; font-size: 12px; color: #666; margin-top: -10px; margin-bottom: 15px; padding: 0 95px;">
-                <span>Fast</span>
-                <span>Medium</span>
-                <span>Slow</span>
+                <div class="value-display" id="speed-value">Normal</div>
             </div>
 
             <div class="text-input-group">
@@ -545,13 +543,6 @@ HTML_TEMPLATE = '''
     </div>
 
     <script>
-        // Clock settings state
-        let clockSettings = {
-            format24: true,
-            showSeconds: false,
-            blinkColon: true
-        };
-
         // Send command to server
         async function sendCommand(command) {
             try {
@@ -562,9 +553,9 @@ HTML_TEMPLATE = '''
                     },
                     body: JSON.stringify({ command: command })
                 });
-                
+
                 const result = await response.json();
-                
+
                 if (result.status === 'success') {
                     addLog(`✅ ${command} → Success`);
                     document.getElementById('current-effect').textContent = result.current_effect;
@@ -584,32 +575,35 @@ HTML_TEMPLATE = '''
             sendCommand(`start ${effect}`);
         }
 
+        // Speed and brightness preset mappings
+        const speedPresets = {
+            0: { label: 'Super Slow', value: 1000 },
+            1: { label: 'Slow', value: 500 },
+            2: { label: 'Normal', value: 200 },
+            3: { label: 'Fast', value: 100 },
+            4: { label: 'Super Fast', value: 50 }
+        };
+
+        const brightnessPresets = {
+            0: { label: 'Off', value: 0 },
+            1: { label: 'Dim', value: 3 },
+            2: { label: 'Normal', value: 8 },
+            3: { label: 'Bright', value: 12 },
+            4: { label: 'Max', value: 15 }
+        };
+
         // Update brightness
-        function updateBrightness(value) {
-            document.getElementById('brightness-value').textContent = value;
-            sendCommand(`brightness ${value}`);
+        function updateBrightness(presetIndex) {
+            const preset = brightnessPresets[presetIndex];
+            document.getElementById('brightness-value').textContent = preset.label;
+            sendCommand(`brightness ${preset.value}`);
         }
 
-        // Update speed with non-linear scaling
-        function updateSpeed(value) {
-            // Non-linear scaling: more precision at lower speeds
-            let actualSpeed;
-            const sliderValue = parseInt(value);
-            
-            if (sliderValue <= 150) {
-                // 10-150 on slider = 10-150ms (1:1 for fast speeds)
-                actualSpeed = sliderValue;
-            } else if (sliderValue <= 300) {
-                // 150-300 on slider = 150-500ms (expanded range for medium)
-                actualSpeed = 150 + ((sliderValue - 150) * 2.33);
-            } else {
-                // 300-500 on slider = 500-2000ms (expanded range for slow)
-                actualSpeed = 500 + ((sliderValue - 300) * 7.5);
-            }
-            
-            actualSpeed = Math.round(actualSpeed);
-            document.getElementById('speed-value').textContent = actualSpeed + 'ms';
-            sendCommand(`speed ${actualSpeed}`);
+        // Update speed
+        function updateSpeed(presetIndex) {
+            const preset = speedPresets[presetIndex];
+            document.getElementById('speed-value').textContent = preset.label;
+            sendCommand(`speed ${preset.value}`);
         }
 
         // Update text
@@ -621,46 +615,11 @@ HTML_TEMPLATE = '''
             }
         }
 
-        // Update clock settings
-        function updateClockSettings() {
-            const format12 = document.getElementById('clock-format').checked;
-            const showSeconds = document.getElementById('show-seconds').checked;
-            const blinkColon = document.getElementById('blink-colon').checked;
-            
-            clockSettings.format24 = !format12;
-            clockSettings.showSeconds = showSeconds;
-            clockSettings.blinkColon = blinkColon;
-            
-            // Build clock command with options
-            let clockCommand = 'clock';
-            if (format12) clockCommand += ' 12';
-            else clockCommand += ' 24';
-            
-            if (showSeconds) clockCommand += ' seconds';
-            else clockCommand += ' noseconds';
-            
-            if (blinkColon) clockCommand += ' blink';
-            else clockCommand += ' noblink';
-            
-            sendCommand(clockCommand);
-            addLog(`🕐 Clock settings updated`);
-        }
-
-        // Show clock once with current settings
-        function showClock() {
-            let clockCommand = 'clock';
-            if (!clockSettings.format24) clockCommand += ' 12';
-            if (clockSettings.showSeconds) clockCommand += ' seconds';
-            if (!clockSettings.blinkColon) clockCommand += ' noblink';
-            
-            sendCommand(clockCommand);
-        }
-
         // Update connection status
         function updateConnectionStatus(connected) {
             const statusDot = document.getElementById('status-dot');
             const statusText = document.getElementById('connection-status');
-            
+
             if (connected) {
                 statusDot.className = 'status-dot connected';
                 statusText.textContent = 'Connected';
@@ -678,11 +637,19 @@ HTML_TEMPLATE = '''
             entry.textContent = `${new Date().toLocaleTimeString()} - ${message}`;
             log.appendChild(entry);
             log.scrollTop = log.scrollHeight;
-            
+
             // Keep only last 20 entries
             while (log.children.length > 20) {
                 log.removeChild(log.firstChild);
             }
+        }
+
+        // Show port status message
+        function showPortStatus(message, type) {
+            const statusDiv = document.getElementById('port-status');
+            statusDiv.textContent = message;
+            statusDiv.className = `port-status ${type}`;
+            statusDiv.style.display = 'block';
         }
 
         // Handle Enter key in text input
@@ -699,16 +666,128 @@ HTML_TEMPLATE = '''
                 const status = await response.json();
                 updateConnectionStatus(status.connected);
                 document.getElementById('current-effect').textContent = status.current_effect;
+
+                // Update port display if it has changed
+                updatePortStatus(status.port);
             } catch (error) {
                 updateConnectionStatus(false);
             }
         }, 5000); // Check every 5 seconds
 
+        // Port management functions
+        async function scanPorts() {
+            try {
+                const response = await fetch('/available-ports');
+                const data = await response.json();
+
+                const dropdown = document.getElementById('port-dropdown');
+                dropdown.innerHTML = '';
+
+                // Add default option
+                const defaultOption = document.createElement('option');
+                defaultOption.value = '';
+                defaultOption.textContent = 'Select a port...';
+                dropdown.appendChild(defaultOption);
+
+                if (data.ports && data.ports.length > 0) {
+                    data.ports.forEach(port => {
+                        const option = document.createElement('option');
+                        option.value = port.device;
+                        option.textContent = `${port.device} - ${port.description}`;
+                        dropdown.appendChild(option);
+                    });
+                    showPortStatus('Found ' + data.ports.length + ' available ports', 'info');
+                } else {
+                    showPortStatus('No serial ports detected', 'error');
+                }
+            } catch (error) {
+                showPortStatus('Error scanning ports: ' + error.message, 'error');
+            }
+        }
+
+        async function connectToSelectedPort() {
+            const selectedPort = document.getElementById('port-dropdown').value;
+
+            if (!selectedPort) {
+                return; // No port selected
+            }
+
+            showPortStatus('Connecting to ' + selectedPort + '...', 'info');
+            addLog('🔌 Attempting to connect to: ' + selectedPort);
+
+            try {
+                const response = await fetch('/change-port', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ port: selectedPort })
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    showPortStatus('✅ Connected to ' + selectedPort, 'success');
+                    addLog('✅ Successfully connected to: ' + selectedPort);
+                    updateConnectionStatus(true);
+
+                    // Update the port display in the status section
+                    updatePortStatus(selectedPort);
+                } else {
+                    showPortStatus('❌ Failed to connect: ' + result.message, 'error');
+                    addLog('❌ Connection failed: ' + result.message);
+                    updateConnectionStatus(false);
+
+                    // Reset dropdown to empty selection on failure
+                    document.getElementById('port-dropdown').value = '';
+                }
+            } catch (error) {
+                showPortStatus('❌ Connection error: ' + error.message, 'error');
+                addLog('❌ Connection error: ' + error.message);
+                updateConnectionStatus(false);
+
+                // Reset dropdown to empty selection on failure
+                document.getElementById('port-dropdown').value = '';
+            }
+        }
+
+        // Update the port display in the status section
+        function updatePortStatus(port) {
+            const portElements = document.querySelectorAll('.status-item span');
+            portElements.forEach(element => {
+                if (element.previousElementSibling && element.previousElementSibling.textContent === 'Port:') {
+                    element.textContent = port;
+                }
+            });
+        }
+
+        async function reconnectCurrent() {
+            showPortStatus('Reconnecting to current port...', 'info');
+
+            try {
+                const response = await fetch('/reconnect', { method: 'POST' });
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    showPortStatus('✅ Reconnected successfully', 'success');
+                    addLog('🔌 Reconnected to current port');
+                    updateConnectionStatus(true);
+                } else {
+                    showPortStatus('❌ Reconnection failed: ' + result.message, 'error');
+                    updateConnectionStatus(false);
+                }
+            } catch (error) {
+                showPortStatus('❌ Reconnection error: ' + error.message, 'error');
+                updateConnectionStatus(false);
+            }
+        }
+
         // Initialize
         window.onload = function() {
+            // Scan for available ports on load
+            scanPorts();
+
             setTimeout(() => {
                 addLog('🎯 Ready to control your LED matrix!');
-                addLog('🕐 Clock controls available with format options!');
+                addLog('🔌 Select a port from the dropdown to connect!');
             }, 1000);
         };
     </script>
@@ -719,7 +798,7 @@ HTML_TEMPLATE = '''
 @app.route('/')
 def index():
     """Main web interface"""
-    return render_template_string(HTML_TEMPLATE, 
+    return render_template_string(HTML_TEMPLATE,
                                 connected=matrix_controller.connected,
                                 current_effect=matrix_controller.current_effect,
                                 port=matrix_controller.port)
@@ -730,15 +809,104 @@ def handle_command():
     try:
         data = request.get_json()
         command = data.get('command', '')
-        
+
         if not command:
             return jsonify({"status": "error", "message": "No command provided"})
-        
+
         result = matrix_controller.send_command(command)
         return jsonify(result)
-        
+
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
+
+@app.route('/available-ports')
+def available_ports():
+    """Get list of available serial ports"""
+    try:
+        ports = serial.tools.list_ports.comports()
+        port_list = []
+
+        for port in ports:
+            port_list.append({
+                'device': port.device,
+                'description': port.description,
+                'hwid': port.hwid if hasattr(port, 'hwid') else ''
+            })
+
+        return jsonify({
+            "status": "success",
+            "ports": port_list
+        })
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e),
+            "ports": []
+        })
+
+@app.route('/test-port', methods=['POST'])
+def test_port():
+    """Test connection to a specific port without switching"""
+    try:
+        data = request.get_json()
+        test_port_path = data.get('port', '')
+
+        if not test_port_path:
+            return jsonify({"status": "error", "message": "No port specified"})
+
+        # Try to connect to the port
+        test_serial = serial.Serial(
+            test_port_path,
+            SERIAL_BAUDRATE,
+            timeout=2
+        )
+        time.sleep(1)  # Brief connection test
+        test_serial.close()
+
+        return jsonify({
+            "status": "success",
+            "message": f"Port {test_port_path} is available and responding"
+        })
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": f"Port test failed: {str(e)}"
+        })
+
+@app.route('/change-port', methods=['POST'])
+def change_port():
+    """Change to a new serial port"""
+    try:
+        data = request.get_json()
+        new_port = data.get('port', '')
+
+        if not new_port:
+            return jsonify({"status": "error", "message": "No port specified"})
+
+        # Disconnect from current port
+        matrix_controller.disconnect()
+
+        # Connect to new port
+        success = matrix_controller.connect(new_port)
+
+        if success:
+            return jsonify({
+                "status": "success",
+                "message": f"Successfully switched to {new_port}",
+                "current_port": new_port
+            })
+        else:
+            return jsonify({
+                "status": "error",
+                "message": f"Failed to connect to {new_port}"
+            })
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": f"Port change failed: {str(e)}"
+        })
 
 @app.route('/status')
 def status():
@@ -747,22 +915,26 @@ def status():
         "connected": matrix_controller.connected,
         "current_effect": matrix_controller.current_effect,
         "last_command": matrix_controller.last_command,
-        "port": matrix_controller.port
+        "port": matrix_controller.port or "None"
     })
 
 @app.route('/reconnect', methods=['POST'])
 def reconnect():
-    """Reconnect to the LED matrix"""
+    """Reconnect to the current LED matrix port"""
     try:
+        if not matrix_controller.port:
+            return jsonify({"status": "error", "message": "No port selected"})
+
+        current_port = matrix_controller.port
         matrix_controller.disconnect()
         time.sleep(1)
-        success = matrix_controller.connect()
-        
+        success = matrix_controller.connect(current_port)
+
         if success:
             return jsonify({"status": "success", "message": "Reconnected successfully"})
         else:
             return jsonify({"status": "error", "message": "Failed to reconnect"})
-            
+
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
 
@@ -773,53 +945,43 @@ def cleanup():
 
 if __name__ == '__main__':
     import atexit
+    import os
     atexit.register(cleanup)
+
+    # Check if running as a service (installed in /opt/picopixels)
+    is_service = os.path.dirname(os.path.abspath(__file__)) == '/opt/picopixels'
+    port = 5123 if is_service else 5000
     
     print("🚀 Starting LED Matrix Web Controller...")
-    print(f"📡 Connecting to LED Matrix on {SERIAL_PORT}...")
-    
-    if matrix_controller.connected:
-        print("✅ Connected to LED Matrix!")
-        print("🌐 Starting web server...")
-        print()
-        print("=" * 50)
-        print("🎉 LED Matrix Web Controller Ready!")
-        print()
-        print("📱 Open your browser and go to:")
-        print("   http://localhost:5000")
-        print("   http://127.0.0.1:5000")
-        print()
-        print("🔧 To use on other devices on your network:")
-        print("   Find your computer's IP address and use:")
-        print("   http://YOUR_IP_ADDRESS:5000")
-        print()
-        print("⚡ Controls available:")
-        print("   • All animation effects")
-        print("   • Brightness control")
-        print("   • Speed control") 
-        print("   • Custom text messages")
-        print("   • Clock display with format options")
-        print("   • Real-time status monitoring")
-        print()
-        print("🛑 Press Ctrl+C to stop the server")
-        print("=" * 50)
-        print()
-        
-        try:
-            app.run(host='0.0.0.0', port=5000, debug=False)
-        except KeyboardInterrupt:
-            print("\n🛑 Shutting down...")
-            cleanup()
-    else:
-        print("❌ Failed to connect to LED Matrix")
-        print("🔧 Please check:")
-        print(f"   • Pi Pico is connected to {SERIAL_PORT}")
-        print("   • LED Matrix code is running on Pi Pico")
-        print("   • No other programs are using the serial port")
-        print("   • Update SERIAL_PORT in this script if needed")
-        print()
-        print("💡 Common ports:")
-        print("   • Linux/Mac: /dev/ttyACM0, /dev/ttyUSB0")
-        print("   • Windows: COM3, COM4, COM5")
-        print()
-        print("🔄 Edit the SERIAL_PORT variable at the top of this file")
+    if is_service:
+        print("🔧 Running as system service")
+
+    print("🌐 Starting web server...")
+    print()
+    print("=" * 50)
+    print("🎉 LED Matrix Web Controller Ready!")
+    print()
+    print("📱 Open your browser and go to:")
+    print(f"   http://localhost:{port}")
+    print(f"   http://127.0.0.1:{port}")
+    print()
+    print("🔧 To use on other devices on your network:")
+    print("   Find your computer's IP address and use:")
+    print(f"   http://YOUR_IP_ADDRESS:{port}")
+    print()
+    print("⚡ Controls available:")
+    print("   • All animation effects")
+    print("   • Brightness control")
+    print("   • Speed control")
+    print("   • Custom text messages")
+    print("   • Real-time status monitoring")
+    print()
+    print("🛑 Press Ctrl+C to stop the server")
+    print("=" * 50)
+    print()
+
+    try:
+        app.run(host='0.0.0.0', port=port, debug=False)
+    except KeyboardInterrupt:
+        print("\n🛑 Shutting down...")
+        cleanup()
