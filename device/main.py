@@ -45,6 +45,7 @@ pong_paddle2 = HEIGHT//2
 clock_24hour = True
 clock_show_seconds = False
 clock_blink_colon = True
+clock_show_ampm = True
 
 def set_pixel(x, y, state=1):
     """Set pixel with orientation correction"""
@@ -386,7 +387,7 @@ def moving_dot():
 
 def clock_display():
     """Display current time"""
-    global clock_24hour, clock_show_seconds, clock_blink_colon
+    global clock_24hour, clock_show_seconds, clock_blink_colon, clock_show_ampm
 
     display.fill(0)
     current_time = time.localtime()
@@ -428,7 +429,7 @@ def clock_display():
     char_width = 4
     total_width = len(time_str) * char_width - 1
 
-    if not clock_24hour:
+    if not clock_24hour and clock_show_ampm and not clock_show_seconds:
         total_width += 8
 
     start_x = (WIDTH - total_width) // 2
@@ -447,7 +448,7 @@ def clock_display():
                             set_pixel(x_pos + col, 1 + row, 1)
             x_pos += char_width
 
-    if not clock_24hour:
+    if not clock_24hour and clock_show_ampm and not clock_show_seconds:
         x_pos += 1
         am_pm = "PM" if is_pm else "AM"
         for char in am_pm:
@@ -483,7 +484,7 @@ effects = {
 def process_command(command):
     """Process commands"""
     global current_effect, running, speed, brightness, scroll_text, scroll_pos
-    global clock_24hour, clock_show_seconds, clock_blink_colon
+    global clock_24hour, clock_show_seconds, clock_blink_colon, clock_show_ampm
     global flip_horizontal, flip_vertical, scroll_direction
 
     try:
@@ -576,6 +577,12 @@ def process_command(command):
                     elif opt.lower() == 'noblink':
                         clock_blink_colon = False
                         print("Clock: Colon blinking disabled")
+                    elif opt.lower() in ['ampm', 'am/pm']:
+                        clock_show_ampm = True
+                        print("Clock: AM/PM display enabled")
+                    elif opt.lower() in ['noampm', 'no-ampm']:
+                        clock_show_ampm = False
+                        print("Clock: AM/PM display disabled")
                 effects[cmd]()
             else:
                 effects[cmd]()
@@ -598,6 +605,27 @@ def process_command(command):
                 except:
                     print("Invalid speed")
 
+        elif cmd == 'settime':
+            if len(parts) >= 7:
+                try:
+                    year = int(parts[1])
+                    month = int(parts[2])
+                    day = int(parts[3])
+                    hour = int(parts[4])
+                    minute = int(parts[5])
+                    second = int(parts[6])
+                    weekday = int(parts[7])
+                    
+                    # Set the RTC time
+                    from machine import RTC
+                    rtc = RTC()
+                    rtc.datetime((year, month, day, weekday, hour, minute, second, 0))
+                    print(f"Time set to: {year}-{month:02d}-{day:02d} {hour:02d}:{minute:02d}:{second:02d}")
+                except Exception as e:
+                    print(f"Error setting time: {e}")
+            else:
+                print("Usage: settime YYYY MM DD HH MM SS WD")
+
         elif cmd == 'list':
             print(f"Effects: {list(effects.keys())}")
 
@@ -611,7 +639,8 @@ def process_command(command):
             print("text <message> - Set scroll text")
             print("scroll [left/right] - Set scroll direction")
             print("flip [h/v/both/reset] - Flip orientation")
-            print("clock [12/24] [seconds/noseconds] [blink/noblink] - Show time")
+            print("clock [12/24] [seconds/noseconds] [blink/noblink] [ampm/noampm] - Show time")
+            print("settime YYYY MM DD HH MM SS WD - Set current time")
             print("list - Show all effects")
 
         else:

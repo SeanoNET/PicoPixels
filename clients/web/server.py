@@ -510,6 +510,47 @@ HTML_TEMPLATE = '''
                 <button class="btn" onclick="startEffect('balls')">Bouncing Balls</button>
                 <button class="btn" onclick="startEffect('pong')">Pong Game</button>
                 <button class="btn" onclick="startEffect('text')">Scrolling Text</button>
+                <button class="btn" onclick="startEffect('clock')">Clock Display</button>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3>🕒 Clock Settings</h3>
+            <div class="control-group">
+                <label>Time Format:</label>
+                <div style="display: flex; gap: 10px; flex: 1;">
+                    <button class="btn" onclick="setClockFormat('12')" id="clock-12h-btn" style="flex: 1;">12 Hour</button>
+                    <button class="btn" onclick="setClockFormat('24')" id="clock-24h-btn" style="flex: 1;">24 Hour</button>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label>Show Seconds:</label>
+                <div style="display: flex; gap: 10px; flex: 1;">
+                    <button class="btn" onclick="setClockSeconds(true)" id="clock-seconds-on-btn" style="flex: 1;">On</button>
+                    <button class="btn" onclick="setClockSeconds(false)" id="clock-seconds-off-btn" style="flex: 1;">Off</button>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label>Colon Blink:</label>
+                <div style="display: flex; gap: 10px; flex: 1;">
+                    <button class="btn" onclick="setClockBlink(true)" id="clock-blink-on-btn" style="flex: 1;">On</button>
+                    <button class="btn" onclick="setClockBlink(false)" id="clock-blink-off-btn" style="flex: 1;">Off</button>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label>Show AM/PM:</label>
+                <div style="display: flex; gap: 10px; flex: 1;">
+                    <button class="btn" onclick="setClockAmPm(true)" id="clock-ampm-on-btn" style="flex: 1;">On</button>
+                    <button class="btn" onclick="setClockAmPm(false)" id="clock-ampm-off-btn" style="flex: 1;">Off</button>
+                </div>
+            </div>
+
+            <div class="button-grid" style="margin-top: 15px;">
+                <button class="btn" onclick="applyClockSettings()">Apply & Show Clock</button>
+                <button class="btn" onclick="syncTime()">Sync Time</button>
             </div>
         </div>
 
@@ -575,6 +616,126 @@ HTML_TEMPLATE = '''
             sendCommand(`start ${effect}`);
         }
 
+        // Clock settings variables
+        let clockFormat = '24';
+        let clockSeconds = false;
+        let clockBlink = true;
+        let clockAmPm = true;
+
+        // Clock setting functions
+        function setClockFormat(format) {
+            clockFormat = format;
+            updateClockButtonStates();
+            addLog(`🕒 Clock format set to ${format}-hour`);
+        }
+
+        function setClockSeconds(show) {
+            clockSeconds = show;
+            
+            // Auto-disable AM/PM when seconds are enabled (space constraint)
+            if (show && clockFormat === '12') {
+                clockAmPm = false;
+                addLog(`🕒 Clock seconds enabled - AM/PM auto-disabled (space constraint)`);
+            } else {
+                addLog(`🕒 Clock seconds ${show ? 'enabled' : 'disabled'}`);
+            }
+            
+            updateClockButtonStates();
+        }
+
+        function setClockBlink(blink) {
+            clockBlink = blink;
+            updateClockButtonStates();
+            addLog(`🕒 Clock colon blink ${blink ? 'enabled' : 'disabled'}`);
+        }
+
+        function setClockAmPm(show) {
+            // Don't allow enabling AM/PM when seconds are on (space constraint)
+            if (show && clockSeconds && clockFormat === '12') {
+                addLog(`🕒 Cannot enable AM/PM when seconds are displayed (space constraint)`);
+                return;
+            }
+            
+            clockAmPm = show;
+            updateClockButtonStates();
+            addLog(`🕒 Clock AM/PM display ${show ? 'enabled' : 'disabled'}`);
+        }
+
+        function updateClockButtonStates() {
+            // Reset all clock buttons to default style
+            document.querySelectorAll('[id^="clock-"]').forEach(btn => {
+                btn.style.opacity = '0.6';
+                btn.style.transform = 'none';
+            });
+
+            // Highlight active buttons
+            document.getElementById(`clock-${clockFormat}h-btn`).style.opacity = '1';
+            document.getElementById(`clock-${clockFormat}h-btn`).style.transform = 'translateY(-1px)';
+
+            document.getElementById(`clock-seconds-${clockSeconds ? 'on' : 'off'}-btn`).style.opacity = '1';
+            document.getElementById(`clock-seconds-${clockSeconds ? 'on' : 'off'}-btn`).style.transform = 'translateY(-1px)';
+
+            document.getElementById(`clock-blink-${clockBlink ? 'on' : 'off'}-btn`).style.opacity = '1';
+            document.getElementById(`clock-blink-${clockBlink ? 'on' : 'off'}-btn`).style.transform = 'translateY(-1px)';
+            
+            // Handle AM/PM buttons - disable when seconds are on in 12h mode
+            const ampmDisabled = clockSeconds && clockFormat === '12';
+            
+            if (ampmDisabled) {
+                document.getElementById('clock-ampm-on-btn').style.opacity = '0.3';
+                document.getElementById('clock-ampm-off-btn').style.opacity = '0.5';
+                document.getElementById('clock-ampm-off-btn').style.transform = 'translateY(-1px)';
+            } else {
+                document.getElementById(`clock-ampm-${clockAmPm ? 'on' : 'off'}-btn`).style.opacity = '1';
+                document.getElementById(`clock-ampm-${clockAmPm ? 'on' : 'off'}-btn`).style.transform = 'translateY(-1px)';
+            }
+        }
+
+        function syncTime() {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = now.getMonth() + 1; // JavaScript months are 0-based
+            const day = now.getDate();
+            const hour = now.getHours();
+            const minute = now.getMinutes();
+            const second = now.getSeconds();
+            const weekday = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
+
+            // Format: settime YYYY MM DD HH MM SS WD
+            const timeCommand = `settime ${year} ${month} ${day} ${hour} ${minute} ${second} ${weekday}`;
+            sendCommand(timeCommand);
+            addLog(`🕒 Syncing time: ${now.toLocaleString()}`);
+        }
+
+        function applyClockSettings() {
+            addLog(`🕒 Applying clock settings: ${clockFormat}h, seconds: ${clockSeconds ? 'on' : 'off'}, blink: ${clockBlink ? 'on' : 'off'}, AM/PM: ${clockAmPm ? 'on' : 'off'}`);
+
+            // Start clock first to make it the active effect
+            sendCommand('start clock');
+
+            // Then apply settings after a short delay
+            setTimeout(() => {
+                let clockCommand = 'clock';
+
+                // Add format
+                clockCommand += ` ${clockFormat}`;
+
+                // Add seconds setting
+                clockCommand += clockSeconds ? ' seconds' : ' noseconds';
+
+                // Add blink setting
+                clockCommand += clockBlink ? ' blink' : ' noblink';
+
+                // Add AM/PM setting (only relevant for 12-hour format)
+                if (clockFormat === '12') {
+                    clockCommand += clockAmPm ? ' ampm' : ' noampm';
+                }
+
+                sendCommand(clockCommand);
+                addLog('🕒 Clock settings applied');
+            }, 200);
+        }
+
         // Speed and brightness preset mappings
         const speedPresets = {
             0: { label: 'Super Slow', value: 1000 },
@@ -585,8 +746,8 @@ HTML_TEMPLATE = '''
         };
 
         const brightnessPresets = {
-            0: { label: 'Off', value: 0 },
-            1: { label: 'Dim', value: 3 },
+            0: { label: 'Dim', value: 0 },
+            1: { label: 'Less Dim', value: 3 },
             2: { label: 'Normal', value: 8 },
             3: { label: 'Bright', value: 12 },
             4: { label: 'Max', value: 15 }
@@ -785,6 +946,9 @@ HTML_TEMPLATE = '''
             // Scan for available ports on load
             scanPorts();
 
+            // Initialize clock button states
+            updateClockButtonStates();
+
             setTimeout(() => {
                 addLog('🎯 Ready to control your LED matrix!');
                 addLog('🔌 Select a port from the dropdown to connect!');
@@ -951,7 +1115,7 @@ if __name__ == '__main__':
     # Check if running as a service (installed in /opt/picopixels)
     is_service = os.path.dirname(os.path.abspath(__file__)) == '/opt/picopixels'
     port = 5123 if is_service else 5000
-    
+
     print("🚀 Starting LED Matrix Web Controller...")
     if is_service:
         print("🔧 Running as system service")
